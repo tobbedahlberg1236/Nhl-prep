@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="NHL-prep">
+<meta name="theme-color" content="#0b0f14">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<title>NHL-förberedelser</title>
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;background:#0b0f14;color:#eef2f6;font-family:system-ui,-apple-system,sans-serif}
+.wrap{min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px}
+form{width:min(380px,100%);background:#121820;border:1px solid #263140;border-radius:16px;padding:28px}
+h1{font-size:22px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px}
+p{color:#8b98a8;font-size:14px;margin-bottom:18px}
+input[type=password]{width:100%;font-size:18px;padding:12px 14px;border-radius:10px;border:1px solid #263140;background:#0b0f14;color:#eef2f6}
+label{display:flex;gap:8px;align-items:center;color:#8b98a8;font-size:14px;margin:14px 0 18px}
+button{width:100%;font-size:17px;font-weight:700;padding:12px;border:0;border-radius:10px;background:#f2c14e;color:#111;cursor:pointer}
+.err{color:#ff7b86;font-size:14px;margin-top:12px;min-height:1em}
+.loading{color:#8b98a8;font-size:15px}
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap">
+  <div class="loading" id="loading">Laddar …</div>
+  <form id="f" hidden>
+    <h1>NHL-förberedelser</h1>
+    <p>Skriv lösenordet för att öppna sidan.</p>
+    <input type="password" id="pw" autocomplete="current-password" placeholder="Lösenord" required>
+    <label><input type="checkbox" id="rem" checked> Kom ihåg på den här enheten</label>
+    <button type="submit">Öppna</button>
+    <div class="err" id="err"></div>
+  </form>
+</div>
+<script>
+const KEY="nhlprep-pw";
+const b64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function decrypt(blob,pw){
+  const base=await crypto.subtle.importKey("raw",new TextEncoder().encode(pw),"PBKDF2",false,["deriveKey"]);
+  const key=await crypto.subtle.deriveKey({name:"PBKDF2",salt:b64(blob.salt),iterations:blob.iter,hash:"SHA-256"},base,{name:"AES-GCM",length:256},false,["decrypt"]);
+  const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:b64(blob.iv)},key,b64(blob.ct));
+  return new TextDecoder().decode(pt);
+}
+async function get(name){
+  const r=await fetch(name+"?t="+Date.now(),{cache:"no-store"});
+  if(!r.ok) throw new Error("http "+r.status);
+  return r.json();
+}
+async function open(pw,remember){
+  const [app,news]=await Promise.all([get("app.enc"),get("news.enc").catch(()=>null)]);
+  let html=await decrypt(app,pw);            // fel lösenord → kastar fel här
+  let newsJson="null";
+  if(news){ try{ newsJson=await decrypt(news,pw); JSON.parse(newsJson); }catch(e){ newsJson="null"; } }
+  try{ remember?localStorage.setItem(KEY,pw):localStorage.removeItem(KEY); }catch(e){}
+  html=html.replace("<!--NEWS-->","<script>window.NEWS="+newsJson.replace(/<\//g,"<\\/")+";<\/script>");
+  document.open(); document.write(html); document.close();
+}
+const f=document.getElementById("f"), err=document.getElementById("err");
+function showForm(msg){ document.getElementById("loading").hidden=true; f.hidden=false; err.textContent=msg||""; document.getElementById("pw").focus(); }
+f.addEventListener("submit",async e=>{
+  e.preventDefault(); err.textContent="Öppnar …";
+  try{ await open(document.getElementById("pw").value, document.getElementById("rem").checked); }
+  catch(x){ err.textContent = /http/.test(x.message) ? "Kunde inte hämta sidan. Kontrollera nätet och försök igen." : "Fel lösenord."; }
+});
+(async()=>{
+  let saved=null; try{ saved=localStorage.getItem(KEY); }catch(e){}
+  if(!saved) return showForm();
+  try{ await open(saved,true); }
+  catch(x){ if(!/http/.test(x.message)){ try{localStorage.removeItem(KEY);}catch(e){} showForm("Lösenordet har ändrats – skriv det nya."); }
+            else showForm("Kunde inte hämta sidan. Kontrollera nätet och försök igen."); }
+})();
+</script>
+</body>
+</html>
